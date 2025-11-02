@@ -399,6 +399,8 @@ internal sealed class TaskDispatcher : ITaskDispatcher, IDisposable
                     }
                     break;
                 }
+
+                await Task.Delay(1000);
             }
 
             if (processedCount > 0)

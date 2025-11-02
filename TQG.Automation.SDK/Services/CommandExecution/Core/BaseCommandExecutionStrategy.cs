@@ -81,25 +81,18 @@ internal abstract class BaseCommandExecutionStrategy(
     {
         try
         {
+            // Đọc tất cả các tín hiệu cần thiết
             bool alarm = await connector.ReadAsync<bool>(signals.Alarm);
             bool complete = await connector.ReadAsync<bool>(completeSignal);
             bool cancelCommand = await connector.ReadAsync<bool>(signals.CancelCommand);
 
-            // Kiểm tra CancelCommand trước - ưu tiên cao nhất
-            if (cancelCommand)
-            {
-                Logger.LogWarning($"[{CommandType}] Cancel command detected for device {deviceId}, task {taskId}. Removing task from queue.");
-                TaskDispatcher.RemoveTask(taskId);
-                OnTaskCancelled(deviceId, taskId);
-                DeviceMonitor.UpdateDeviceStatus(deviceId, DeviceStatus.Error);
-                return true;
-            }
-
-            if (complete)
+            // Kiểm tra nếu có Complete hoặc Alarm
+            if (complete || alarm)
             {
                 short errorCode = await connector.ReadAsync<short>(signals.ErrorCode);
 
-                if (!alarm)
+                // Trường hợp 1: Complete được bật (không có alarm)
+                if (complete && !alarm)
                 {
                     await Task.Delay(6000);
 
@@ -107,18 +100,59 @@ internal abstract class BaseCommandExecutionStrategy(
                     TaskDispatcher.RemoveTask(taskId);
                     OnTaskSucceeded(deviceId, taskId);
                     DeviceMonitor.UpdateDeviceStatus(deviceId, DeviceStatus.Idle);
+                    return true;
                 }
-                else
+
+                // Trường hợp 2: Có Alarm - cần đợi Complete hoặc CancelCommand
+                if (alarm)
                 {
-                    Logger.LogError($"[{CommandType}] Task completed with alarm for device {deviceId}, task {taskId}. Error code: {errorCode}. Removing task from queue.");
+                    Logger.LogError($"[{CommandType}] Task completed with alarm for device {deviceId}, task {taskId}. Error code: {errorCode}. Waiting for completion or cancel signal.");
                     TaskDispatcher.RemoveTask(taskId);
                     OnTaskFailed(deviceId, taskId, ErrorDetail.RunningFailure(taskId, deviceId, errorCode));
                     DeviceMonitor.UpdateDeviceStatus(deviceId, DeviceStatus.Error);
-                }
 
-                return true;
+                    // Polling liên tục để chờ Complete hoặc CancelCommand
+                    Logger.LogInformation($"[{CommandType}] Starting alarm resolution polling for device {deviceId}, task {taskId}");
+                    
+                    using var alarmTimer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+                    var alarmStartTime = DateTime.UtcNow;
+                    var alarmTimeout = TimeSpan.FromMinutes(30); // Timeout cho việc xử lý alarm
+
+                    while (DateTime.UtcNow - alarmStartTime < alarmTimeout)
+                    {
+                        await alarmTimer.WaitForNextTickAsync();
+
+                        bool alarmComplete = await connector.ReadAsync<bool>(completeSignal);
+                        bool alarmCancel = await connector.ReadAsync<bool>(signals.CancelCommand);
+
+                        // Kiểm tra CancelCommand
+                        if (alarmCancel)
+                        {
+                            Logger.LogWarning($"[{CommandType}] Cancel command detected during alarm for device {deviceId}, task {taskId}.");
+                            OnTaskCancelled(deviceId, taskId);
+                            DeviceMonitor.UpdateDeviceStatus(deviceId, DeviceStatus.Error);
+                            return true;
+                        }
+
+                        // Kiểm tra Complete
+                        if (alarmComplete)
+                        {
+                            await Task.Delay(6000);
+
+                            Logger.LogInformation($"[{CommandType}] Task completed after alarm resolution for device {deviceId}, task {taskId}.");
+                            OnTaskSucceeded(deviceId, taskId);
+                            DeviceMonitor.UpdateDeviceStatus(deviceId, DeviceStatus.Idle);
+                            return true;
+                        }
+                    }
+
+                    // Timeout khi đợi xử lý alarm
+                    Logger.LogError($"[{CommandType}] Alarm resolution timeout for device {deviceId}, task {taskId} after {alarmTimeout.TotalMinutes} minutes.");
+                    return true;
+                }
             }
 
+            // Không có Complete hay Alarm, tiếp tục polling
             return false;
         }
         catch (Exception ex)
