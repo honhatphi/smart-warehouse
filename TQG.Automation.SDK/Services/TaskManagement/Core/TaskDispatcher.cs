@@ -172,6 +172,29 @@ internal sealed class TaskDispatcher : ITaskDispatcher, IDisposable
         return removedCount > 0;
     }
 
+    /// <summary>
+    /// Xóa một task đơn lẻ khỏi hàng đợi.
+    /// </summary>
+    /// <param name="taskId">ID của task cần xóa.</param>
+    /// <returns>True nếu task được xóa thành công; ngược lại false.</returns>
+    public bool RemoveTask(string taskId)
+    {
+        if (string.IsNullOrWhiteSpace(taskId))
+            return false;
+
+        lock (_queueLock)
+        {
+            var removed = _taskQueue.TryRemove(taskId);
+
+            if (removed && _taskQueue.IsEmpty && _configuration.AutoPauseWhenEmpty)
+            {
+                Interlocked.Exchange(ref _isRunning, 0);
+            }
+
+            return removed;
+        }
+    }
+
     public string? GetCurrentTask(string deviceId)
     {
         return _assigningDevices.TryGetValue(deviceId, out string? taskId) ? taskId : null;
@@ -186,14 +209,25 @@ internal sealed class TaskDispatcher : ITaskDispatcher, IDisposable
         var result = _assigningDevices.TryRemove(deviceId, out var currentTaskId) &&
                currentTaskId == taskId;
 
-        // Trigger queue processing after completing assignment to process pending tasks
-        if (result && !_taskQueue.IsEmpty && _isRunning == 1)
+        if (result)
         {
-            _ = Task.Run(ProcessQueueIfNeeded);
-        }
-        else
-        {
-            Pause();
+            // Nếu còn task trong queue, trigger xử lý task tiếp theo
+            if (!_taskQueue.IsEmpty)
+            {
+                // Nếu dispatcher đang pause, resume nó
+                if (_isRunning == 0)
+                {
+                    _logger.LogInformation("Resuming queue processing after task completion");
+                    Interlocked.Exchange(ref _isRunning, 1);
+                }
+                
+                _ = Task.Run(ProcessQueueIfNeeded);
+            }
+            else if (_configuration.AutoPauseWhenEmpty)
+            {
+                // Queue rỗng và cấu hình auto pause
+                Interlocked.Exchange(ref _isRunning, 0);
+            }
         }
 
         return result;

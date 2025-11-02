@@ -6,4 +6,4 @@
 /// <param name="Floor">Tầng</param>
 /// <param name="Rail">Dãy</param>
 /// <param name="Block">Kệ</param>
-public record Location(short Floor, short Rail, short Block);
+public record Location(short Floor, short Rail, short Block, short Depth = 0);

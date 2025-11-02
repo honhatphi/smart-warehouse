@@ -58,4 +58,9 @@ internal interface ICommandExecutionStrategy
     /// Occurs when a task fails.
     /// </summary>
     event EventHandler<TaskFailedEventArgs>? TaskFailed;
+
+    /// <summary>
+    /// Occurs when a task is cancelled.
+    /// </summary>
+    event EventHandler<TaskCancelledEventArgs>? TaskCancelled;
 }

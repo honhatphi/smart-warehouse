@@ -53,6 +53,15 @@ internal interface ITaskDispatcher : IDisposable
     bool RemoveTasks(IEnumerable<string> taskIds);
 
     /// <summary>
+    /// Xóa một nhiệm vụ đơn lẻ khỏi hàng đợi.
+    /// </summary>
+    /// <param name="taskId">ID của nhiệm vụ cần xóa.</param>
+    /// <returns>True nếu nhiệm vụ được xóa thành công; ngược lại false.</returns>
+    /// <exception cref="ArgumentException">Ném ra khi taskId là null hoặc rỗng.</exception>
+    /// <exception cref="ObjectDisposedException">Ném ra khi dispatcher đã bị dispose.</exception>
+    bool RemoveTask(string taskId);
+
+    /// <summary>
     /// Lấy nhiệm vụ hiện tại đang được thực thi bởi thiết bị được chỉ định.
     /// </summary>
     /// <param name="deviceId">Mã định danh duy nhất của thiết bị.</param>

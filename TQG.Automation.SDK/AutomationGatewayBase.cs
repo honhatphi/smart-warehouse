@@ -37,6 +37,11 @@ public abstract class AutomationGatewayBase : IDisposable
     public event EventHandler<TaskFailedEventArgs>? TaskFailed;
 
     /// <summary>
+    /// Sự kiện phát sinh khi nhiệm vụ bị hủy (cancelled).
+    /// </summary>
+    public event EventHandler<TaskCancelledEventArgs>? TaskCancelled;
+
+    /// <summary>
     /// Khởi tạo instance mới của lớp AutomationGatewayBase.
     /// </summary>
     /// <param name="devices">Danh sách cấu hình thiết bị (không được null).</param>
@@ -79,6 +84,7 @@ public abstract class AutomationGatewayBase : IDisposable
         _barcodeHandler.TaskFailed += (sender, args) => TaskFailed?.Invoke(this, args);
         _commandSender.TaskSucceeded += (sender, args) => TaskSucceeded?.Invoke(this, args);
         _commandSender.TaskFailed += (sender, args) => TaskFailed?.Invoke(this, args);
+        _commandSender.TaskCancelled += (sender, args) => TaskCancelled?.Invoke(this, args);
 
         _logger.LogInformation($"AutomationGateway initialized successfully with {deviceCount} devices configured");
     }

@@ -189,7 +189,7 @@ internal sealed class DeviceMonitor(
             // Check actual PLC status before resetting
             var connector = GetConnector(deviceId);
             var profile = GetProfile(deviceId);
-            
+
             bool alarm = await connector.ReadAsync<bool>(profile.Signals.Alarm);
             short errorCode = await connector.ReadAsync<short>(profile.Signals.ErrorCode);
 
@@ -358,7 +358,8 @@ internal sealed class DeviceMonitor(
             {
                 connector.ReadAsync<short>(signals.ActualFloor),
                 connector.ReadAsync<short>(signals.ActualRail),
-                connector.ReadAsync<short>(signals.ActualBlock)
+                connector.ReadAsync<short>(signals.ActualBlock),
+                connector.ReadAsync<short>(signals.ActualDepth)
             };
 
             await Task.WhenAll(locationTasks);
@@ -369,8 +370,9 @@ internal sealed class DeviceMonitor(
             var floor = locationTasks[0].Result;
             var rail = locationTasks[1].Result;
             var block = locationTasks[2].Result;
+            var depth = locationTasks[3].Result;
 
-            return new Location(floor, rail, block);
+            return new Location(floor, rail, block, depth);
         }
         catch (Exception)
         {
@@ -440,11 +442,11 @@ internal sealed class DeviceMonitor(
             signals.InboundCommand, signals.OutboundCommand, signals.TransferCommand,
             signals.StartProcessCommand, signals.CommandAcknowledged, signals.CommandRejected,
             signals.InboundComplete, signals.OutboundComplete, signals.TransferComplete,
-            signals.Alarm, signals.OutDirBlock, signals.InDirBlock, signals.GateNumber,
+            signals.Alarm,signals.CancelCommand, signals.OutDirBlock, signals.InDirBlock, signals.GateNumber,
             signals.SourceFloor, signals.SourceRail, signals.SourceBlock,
             signals.TargetFloor, signals.TargetRail, signals.TargetBlock,
             signals.BarcodeValid, signals.BarcodeInvalid, signals.ActualFloor,
-            signals.ActualRail, signals.ActualBlock, signals.ErrorCode,
+            signals.ActualRail, signals.ActualBlock,signals.ActualDepth, signals.ErrorCode,
             signals.BarcodeChar1, signals.BarcodeChar2, signals.BarcodeChar3,
             signals.BarcodeChar4, signals.BarcodeChar5, signals.BarcodeChar6,
             signals.BarcodeChar7, signals.BarcodeChar8, signals.BarcodeChar9, signals.BarcodeChar10
@@ -491,7 +493,8 @@ internal sealed class DeviceMonitor(
             connector.WriteAsync(signals.TargetBlock, (short)0),
             connector.WriteAsync(signals.ActualFloor, (short)0),
             connector.WriteAsync(signals.ActualRail, (short)0),
-            connector.WriteAsync(signals.ActualBlock, (short)0)
+            connector.WriteAsync(signals.ActualBlock, (short)0),
+            connector.WriteAsync(signals.ActualDepth, (short)0)
         );
     }
 

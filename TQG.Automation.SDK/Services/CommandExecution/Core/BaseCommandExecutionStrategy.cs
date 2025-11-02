@@ -17,6 +17,7 @@ internal abstract class BaseCommandExecutionStrategy(
 
     public event EventHandler<TaskSucceededEventArgs>? TaskSucceeded;
     public event EventHandler<TaskFailedEventArgs>? TaskFailed;
+    public event EventHandler<TaskCancelledEventArgs>? TaskCancelled;
 
     public abstract CommandType CommandType { get; }
 
@@ -40,16 +41,25 @@ internal abstract class BaseCommandExecutionStrategy(
         {
             bool rejected = await connector.ReadAsync<bool>(signals.CommandRejected);
             bool alarm = await connector.ReadAsync<bool>(signals.Alarm);
+            bool cancelCommand = await connector.ReadAsync<bool>(signals.CancelCommand);
+
+            if (cancelCommand)
+            {
+                Logger.LogWarning($"[{CommandType}] Cancel command detected for device {deviceId}, task {taskId}. Removing task from queue.");
+                TaskDispatcher.RemoveTask(taskId);
+                OnTaskCancelled(deviceId, taskId);
+                DeviceMonitor.UpdateDeviceStatus(deviceId, DeviceStatus.Error);
+                return true;
+            }
 
             if (rejected || alarm)
             {
                 short errorCode = await connector.ReadAsync<short>(signals.ErrorCode);
 
-                Logger.LogError($"[{CommandType}] Alarm detected for device {deviceId}, task {taskId}. Error code: {errorCode}");
+                Logger.LogError($"[{CommandType}] Alarm detected for device {deviceId}, task {taskId}. Error code: {errorCode}. Waiting for completion or cancel signal.");
                 OnTaskFailed(deviceId, taskId, ErrorDetail.RunningFailure(taskId, deviceId, errorCode));
                 DeviceMonitor.UpdateDeviceStatus(deviceId, DeviceStatus.Error);
                 TaskDispatcher.Pause();
-                return true;
             }
 
             return false;
@@ -73,24 +83,36 @@ internal abstract class BaseCommandExecutionStrategy(
         {
             bool alarm = await connector.ReadAsync<bool>(signals.Alarm);
             bool complete = await connector.ReadAsync<bool>(completeSignal);
+            bool cancelCommand = await connector.ReadAsync<bool>(signals.CancelCommand);
 
-            if (complete || alarm)
+            // Kiểm tra CancelCommand trước - ưu tiên cao nhất
+            if (cancelCommand)
+            {
+                Logger.LogWarning($"[{CommandType}] Cancel command detected for device {deviceId}, task {taskId}. Removing task from queue.");
+                TaskDispatcher.RemoveTask(taskId);
+                OnTaskCancelled(deviceId, taskId);
+                DeviceMonitor.UpdateDeviceStatus(deviceId, DeviceStatus.Error);
+                return true;
+            }
+
+            if (complete)
             {
                 short errorCode = await connector.ReadAsync<short>(signals.ErrorCode);
 
-                if (complete && !alarm)
+                if (!alarm)
                 {
                     await Task.Delay(6000);
 
-                    Logger.LogInformation($"[{CommandType}] Task completed successfully for device {deviceId}, task {taskId}");
+                    Logger.LogInformation($"[{CommandType}] Task completed successfully for device {deviceId}, task {taskId}. Removing task from queue.");
+                    TaskDispatcher.RemoveTask(taskId);
                     OnTaskSucceeded(deviceId, taskId);
                     DeviceMonitor.UpdateDeviceStatus(deviceId, DeviceStatus.Idle);
                 }
                 else
                 {
-                    Logger.LogError($"[{CommandType}] Task failed with alarm for device {deviceId}, task {taskId}. Error code: {errorCode}");
+                    Logger.LogError($"[{CommandType}] Task completed with alarm for device {deviceId}, task {taskId}. Error code: {errorCode}. Removing task from queue.");
+                    TaskDispatcher.RemoveTask(taskId);
                     OnTaskFailed(deviceId, taskId, ErrorDetail.RunningFailure(taskId, deviceId, errorCode));
-                    TaskDispatcher.Pause();
                     DeviceMonitor.UpdateDeviceStatus(deviceId, DeviceStatus.Error);
                 }
 
@@ -135,7 +157,8 @@ internal abstract class BaseCommandExecutionStrategy(
             var elapsed = DateTime.UtcNow - startTime;
             if (elapsed >= timeout)
             {
-                Logger.LogWarning($"[{CommandType}] Polling timeout reached for device {deviceId}, task {taskId} after {elapsed.TotalMinutes:F1} minutes");
+                Logger.LogWarning($"[{CommandType}] Polling timeout reached for device {deviceId}, task {taskId} after {elapsed.TotalMinutes:F1} minutes. Removing task from queue.");
+                TaskDispatcher.RemoveTask(taskId);
                 OnTaskFailed(deviceId, taskId, ErrorDetail.Timeout(deviceId, taskId, elapsed));
                 return;
             }
@@ -161,6 +184,12 @@ internal abstract class BaseCommandExecutionStrategy(
     {
         Logger.LogError($"[{CommandType}] Task failed event raised for device {deviceId}, task {taskId}. Error: {error.ErrorMessage}");
         TaskFailed?.Invoke(this, new TaskFailedEventArgs(deviceId, taskId, error));
+    }
+
+    protected void OnTaskCancelled(string deviceId, string taskId)
+    {
+        Logger.LogWarning($"[{CommandType}] Task cancelled event raised for device {deviceId}, task {taskId}");
+        TaskCancelled?.Invoke(this, new TaskCancelledEventArgs(deviceId, taskId));
     }
 
     private void HandlePollingException(string deviceId, string taskId, Exception ex, string pollType)

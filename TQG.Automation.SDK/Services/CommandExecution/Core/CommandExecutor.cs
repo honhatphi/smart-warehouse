@@ -20,6 +20,7 @@ internal sealed class CommandExecutor(
 
     public event EventHandler<TaskSucceededEventArgs>? TaskSucceeded;
     public event EventHandler<TaskFailedEventArgs>? TaskFailed;
+    public event EventHandler<TaskCancelledEventArgs>? TaskCancelled;
 
     /// <summary>
     /// Thực thi lệnh bất đồng bộ sử dụng strategy pattern.
@@ -57,6 +58,7 @@ internal sealed class CommandExecutor(
             // Wire-up simplified event forwarding with self-cleanup
             EventHandler<TaskSucceededEventArgs>? onTaskSucceeded = null;
             EventHandler<TaskFailedEventArgs>? onTaskFailed = null;
+            EventHandler<TaskCancelledEventArgs>? onTaskCancelled = null;
             
             onTaskSucceeded = (s, e) => 
             {
@@ -69,6 +71,7 @@ internal sealed class CommandExecutor(
                     // Clean up immediately on completion
                     if (onTaskSucceeded != null) strategy.TaskSucceeded -= onTaskSucceeded;
                     if (onTaskFailed != null) strategy.TaskFailed -= onTaskFailed;
+                    if (onTaskCancelled != null) strategy.TaskCancelled -= onTaskCancelled;
                 }
             };
             
@@ -83,6 +86,22 @@ internal sealed class CommandExecutor(
                     // Clean up immediately on completion
                     if (onTaskSucceeded != null) strategy.TaskSucceeded -= onTaskSucceeded;
                     if (onTaskFailed != null) strategy.TaskFailed -= onTaskFailed;
+                    if (onTaskCancelled != null) strategy.TaskCancelled -= onTaskCancelled;
+                }
+            };
+
+            onTaskCancelled = (s, e) => 
+            {
+                try
+                {
+                    TaskCancelled?.Invoke(this, e);
+                }
+                finally
+                {
+                    // Clean up immediately on completion
+                    if (onTaskSucceeded != null) strategy.TaskSucceeded -= onTaskSucceeded;
+                    if (onTaskFailed != null) strategy.TaskFailed -= onTaskFailed;
+                    if (onTaskCancelled != null) strategy.TaskCancelled -= onTaskCancelled;
                 }
             };
 
@@ -90,6 +109,7 @@ internal sealed class CommandExecutor(
             {
                 strategy.TaskSucceeded += onTaskSucceeded;
                 strategy.TaskFailed += onTaskFailed;
+                strategy.TaskCancelled += onTaskCancelled;
 
                 await strategy.TriggerCommandAsync(connector, profile.Signals, task);
 
@@ -116,6 +136,7 @@ internal sealed class CommandExecutor(
                         // Clean up event subscriptions when polling completes (fallback cleanup)
                         if (onTaskSucceeded != null) strategy.TaskSucceeded -= onTaskSucceeded;
                         if (onTaskFailed != null) strategy.TaskFailed -= onTaskFailed;
+                        if (onTaskCancelled != null) strategy.TaskCancelled -= onTaskCancelled;
                     }
                 }, TaskContinuationOptions.ExecuteSynchronously);
 
@@ -126,6 +147,7 @@ internal sealed class CommandExecutor(
                 // Clean up event subscriptions on error (fallback cleanup)
                 if (onTaskSucceeded != null) strategy.TaskSucceeded -= onTaskSucceeded;
                 if (onTaskFailed != null) strategy.TaskFailed -= onTaskFailed;
+                if (onTaskCancelled != null) strategy.TaskCancelled -= onTaskCancelled;
                 throw;
             }
         }

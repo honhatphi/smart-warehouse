@@ -27,6 +27,8 @@ internal sealed class CommandSender : ICommandSender, IDisposable
     
     public event EventHandler<TaskFailedEventArgs>? TaskFailed;
 
+    public event EventHandler<TaskCancelledEventArgs>? TaskCancelled;
+
     /// <summary>
     /// Khởi tạo instance mới của CommandSender với các dependencies được inject.
     /// </summary>
@@ -51,6 +53,7 @@ internal sealed class CommandSender : ICommandSender, IDisposable
             _taskDispatcher.TaskAssigned += OnTaskAssigned;
             _commandExecutor.TaskSucceeded += OnTaskSucceeded;
             _commandExecutor.TaskFailed += OnTaskFailed;
+            _commandExecutor.TaskCancelled += OnTaskCancelled;
             _validationHandler.TaskFailed += (s, e) => TaskFailed?.Invoke(this, e);
 
             _logger.LogInformation("CommandSender initialized successfully");
@@ -182,6 +185,21 @@ internal sealed class CommandSender : ICommandSender, IDisposable
         }
     }
 
+    private void OnTaskCancelled(object? sender, TaskCancelledEventArgs args)
+    {
+        try
+        {
+            _logger.LogWarning($"Task {args.TaskId} cancelled on device {args.DeviceId}");
+
+            _taskDispatcher.CompleteTaskAssignment(args.DeviceId, args.TaskId);
+            TaskCancelled?.Invoke(this, args);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError($"Error handling task cancellation for {args.TaskId}", ex);
+        }
+    }
+
     private static void ValidateTask(TransportTask task)
     {
         ArgumentNullException.ThrowIfNull(task);
@@ -229,6 +247,7 @@ internal sealed class CommandSender : ICommandSender, IDisposable
             _taskDispatcher.TaskAssigned -= OnTaskAssigned;
             _commandExecutor.TaskSucceeded -= OnTaskSucceeded;
             _commandExecutor.TaskFailed -= OnTaskFailed;
+            _commandExecutor.TaskCancelled -= OnTaskCancelled;
             _commandExecutor.Dispose();
         }
         catch (Exception ex)

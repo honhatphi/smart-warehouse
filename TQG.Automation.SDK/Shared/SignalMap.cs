@@ -83,6 +83,12 @@ public sealed class SignalMap
     /// </summary>
     public required string Alarm { get; init; }
 
+    /// <summary>
+    /// Trạng thái lệnh bị hủy.
+    /// Type Variable: Req_CancelCommand | Type: Bool
+    /// </summary>
+    public required string CancelCommand { get; init; }
+
     #endregion
 
     #region --- Input/Output Gate & Floor 3 Direction ---
@@ -184,6 +190,12 @@ public sealed class SignalMap
     /// Variable: Cur_Shuttle_Block | Type: Int
     /// </summary>
     public required string ActualBlock { get; init; }
+
+    /// <summary>
+    /// Vị trí sâu thực tế.
+    /// Variable: Cur_Shuttle_Depth | Type: Int
+    /// </summary>
+    public required string ActualDepth { get; init; }
 
     /// <summary>
     /// Mã lỗi.
