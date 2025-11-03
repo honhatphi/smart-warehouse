@@ -233,8 +233,6 @@ internal sealed class TaskDispatcher : ITaskDispatcher, IDisposable
         return result;
     }
 
-
-
     public void EnqueueTasks(IEnumerable<TransportTask> tasks)
     {
         ArgumentNullException.ThrowIfNull(tasks);
@@ -317,100 +315,151 @@ internal sealed class TaskDispatcher : ITaskDispatcher, IDisposable
             var processedCount = 0;
             var maxTasks = _configuration.MaxTasksPerCycle;
 
-            while (processedCount < maxTasks && _taskQueue.TryDequeue(out var task))
+            while (processedCount < maxTasks)
             {
-                if (task == null) continue;
-
+                // Kiểm tra trạng thái dispatcher trước khi xử lý task
                 if (_isRunning == 0)
+                    break;
+
+                // Xem task tiếp theo mà không lấy ra khỏi hàng đợi
+                if (!_taskQueue.TryPeek(out var task) || task == null)
+                    break; // Hàng đợi rỗng
+
+                // Thử gán task cho thiết bị phù hợp
+                var assignment = await TryAssignTaskToDevice(task);
+
+                if (assignment == null)
                 {
-                    _taskQueue.Enqueue(task, DetermineTaskPriority(task));
+                    // Không tìm thấy thiết bị phù hợp, giữ task trong queue và dừng
+                    _logger.LogWarning($"No suitable device available for task {task.TaskId}");
                     break;
                 }
 
-                var assignment = await _assignmentStrategy.AssignTaskAsync(
-                    task,
-                    await _deviceMonitor.GetIdleDevices(),
-                    _deviceProfiles,
-                    _assigningDevices,
-                    _referenceLocations);
-
-                if (assignment != null)
+                // Có thiết bị phù hợp rồi, lấy task ra khỏi hàng đợi
+                if (!_taskQueue.TryDequeue(out var dequeuedTask) || dequeuedTask?.TaskId != task.TaskId)
                 {
-                    // Protect assigning map with assignment lock to ensure single-step
-                    // check-and-set without races. We do not hold this lock across
-                    // awaited operations.
-                    lock (_assignmentLock)
-                    {
-                        if (!_assigningDevices.ContainsKey(assignment.DeviceId))
-                        {
-                            // Double-check device availability to prevent race condition
-                            // Device might have become busy between GetIdleDevices() and here
-                            var deviceProfile = _deviceProfiles[assignment.DeviceId];
-                            var connector = _deviceMonitor.GetConnector(assignment.DeviceId);
-
-                            try
-                            {
-                                // Quick check for device busy status (using sync wrapper for performance)
-                                var isReadyTask = connector.ReadAsync<bool>(deviceProfile.Signals.DeviceReady);
-                                if (isReadyTask.IsCompleted)
-                                {
-                                    var isReady = isReadyTask.Result;
-                                    if (!isReady)
-                                    {
-                                        _logger.LogWarning($"Device {assignment.DeviceId} became busy during assignment, re-queuing task {task.TaskId}");
-                                        lock (_queueLock)
-                                        {
-                                            _taskQueue.Enqueue(task, DetermineTaskPriority(task));
-                                        }
-                                        continue;
-                                    }
-                                }
-                                // If read is not immediate, proceed with assignment (best effort)
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogWarning($"Failed to check device {assignment.DeviceId} status during assignment, proceeding with assignment: {ex.Message}");
-                                // Continue with assignment rather than failing - best effort approach
-                            }
-
-                            _assigningDevices[assignment.DeviceId] = task.TaskId;
-
-                            _logger.LogInformation($"Assigned task {task.TaskId} to device {assignment.DeviceId}");
-                            NotifyTaskAssigned(assignment);
-                            processedCount++;
-                        }
-                        else
-                        {
-                            _logger.LogWarning($"Device {assignment.DeviceId} was assigned to another task, re-queuing task {task.TaskId}");
-                            // Re-enqueue under queue lock to preserve single primitive
-                            lock (_queueLock)
-                            {
-                                _taskQueue.Enqueue(task, DetermineTaskPriority(task));
-                            }
-                        }
-                    }
+                    // Task đã bị thay đổi (có thể bị xóa), thử lại vòng lặp
+                    _logger.LogWarning($"Task {task.TaskId} was modified during assignment, retrying");
+                    continue;
                 }
-                else
+
+                // Xử lý việc gán task cho thiết bị
+                var assignmentSuccess = ProcessDeviceAssignment(assignment, dequeuedTask);
+                
+                if (assignmentSuccess)
                 {
-                    _logger.LogWarning($"No suitable device available for task {task.TaskId}, re-queuing");
-                    lock (_queueLock)
-                    {
-                        _taskQueue.Enqueue(task, DetermineTaskPriority(task));
-                    }
-                    break;
+                    processedCount++;
                 }
 
                 await Task.Delay(1000);
             }
 
-            if (processedCount > 0)
-            {
-                _logger.LogInformation($"Processed {processedCount} tasks. Remaining queue size: {_taskQueue.Count}");
-            }
+            LogProcessingResults(processedCount);
         }
         catch (Exception ex)
         {
             _logger.LogError("Error processing task queue", ex);
+        }
+    }
+
+    /// <summary>
+    /// Thử gán task cho thiết bị phù hợp.
+    /// </summary>
+    private async Task<DeviceAssignment?> TryAssignTaskToDevice(TransportTask task)
+    {
+        return await _assignmentStrategy.AssignTaskAsync(
+            task,
+            await _deviceMonitor.GetIdleDevices(),
+            _deviceProfiles,
+            _assigningDevices,
+            _referenceLocations);
+    }
+
+    /// <summary>
+    /// Xử lý việc gán task cho thiết bị.
+    /// </summary>
+    private bool ProcessDeviceAssignment(DeviceAssignment assignment, TransportTask task)
+    {
+        lock (_assignmentLock)
+        {
+            // Kiểm tra thiết bị có đang được gán cho task khác không
+            if (_assigningDevices.ContainsKey(assignment.DeviceId))
+            {
+                RequeueTask(task, $"Device {assignment.DeviceId} was assigned to another task");
+                return false;
+            }
+
+            // Kiểm tra trạng thái sẵn sàng của thiết bị
+            if (!IsDeviceReady(assignment, task))
+            {
+                return false;
+            }
+
+            // Gán task cho thiết bị
+            return AssignTaskToDevice(assignment, task);
+        }
+    }
+
+    /// <summary>
+    /// Kiểm tra xem thiết bị có sẵn sàng để nhận task hay không.
+    /// </summary>
+    private bool IsDeviceReady(DeviceAssignment assignment, TransportTask task)
+    {
+        var deviceProfile = _deviceProfiles[assignment.DeviceId];
+        var connector = _deviceMonitor.GetConnector(assignment.DeviceId);
+
+        try
+        {
+            var isReadyTask = connector.ReadAsync<bool>(deviceProfile.Signals.DeviceReady);
+            if (isReadyTask.IsCompleted)
+            {
+                var isReady = isReadyTask.Result;
+                if (!isReady)
+                {
+                    RequeueTask(task, $"Device {assignment.DeviceId} became busy during assignment");
+                    return false;
+                }
+            }
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning($"Failed to check device {assignment.DeviceId} status during assignment, proceeding with assignment: {ex.Message}");
+            return true; // Tiếp tục gán nếu không kiểm tra được trạng thái
+        }
+    }
+
+    /// <summary>
+    /// Gán task cho thiết bị và thông báo.
+    /// </summary>
+    private bool AssignTaskToDevice(DeviceAssignment assignment, TransportTask task)
+    {
+        _assigningDevices[assignment.DeviceId] = task.TaskId;
+        _logger.LogInformation($"Assigned task {task.TaskId} to device {assignment.DeviceId}");
+        NotifyTaskAssigned(assignment);
+        return true;
+    }
+
+    /// <summary>
+    /// Đưa task quay lại hàng đợi với lý do cụ thể.
+    /// </summary>
+    private void RequeueTask(TransportTask task, string reason)
+    {
+        _logger.LogWarning($"{reason}, re-queuing task {task.TaskId}");
+        lock (_queueLock)
+        {
+            _taskQueue.Enqueue(task, DetermineTaskPriority(task));
+        }
+    }
+
+    /// <summary>
+    /// Ghi log kết quả xử lý các tasks.
+    /// </summary>
+    private void LogProcessingResults(int processedCount)
+    {
+        if (processedCount > 0)
+        {
+            _logger.LogInformation($"Processed {processedCount} tasks. Remaining queue size: {_taskQueue.Count}");
         }
     }
 

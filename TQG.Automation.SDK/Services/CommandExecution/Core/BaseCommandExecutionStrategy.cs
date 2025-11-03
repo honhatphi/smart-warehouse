@@ -81,17 +81,14 @@ internal abstract class BaseCommandExecutionStrategy(
     {
         try
         {
-            // Đọc tất cả các tín hiệu cần thiết
             bool alarm = await connector.ReadAsync<bool>(signals.Alarm);
             bool complete = await connector.ReadAsync<bool>(completeSignal);
-            bool cancelCommand = await connector.ReadAsync<bool>(signals.CancelCommand);
 
-            // Kiểm tra nếu có Complete hoặc Alarm
             if (complete || alarm)
             {
                 short errorCode = await connector.ReadAsync<short>(signals.ErrorCode);
 
-                // Trường hợp 1: Complete được bật (không có alarm)
+                // Case 1: Complete
                 if (complete && !alarm)
                 {
                     await Task.Delay(6000);
@@ -103,7 +100,7 @@ internal abstract class BaseCommandExecutionStrategy(
                     return true;
                 }
 
-                // Trường hợp 2: Có Alarm - cần đợi Complete hoặc CancelCommand
+                // Case 2: Alarm
                 if (alarm)
                 {
                     Logger.LogError($"[{CommandType}] Task completed with alarm for device {deviceId}, task {taskId}. Error code: {errorCode}. Waiting for completion or cancel signal.");

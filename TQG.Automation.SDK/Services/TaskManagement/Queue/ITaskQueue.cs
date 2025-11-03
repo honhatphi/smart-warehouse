@@ -27,6 +27,14 @@ public interface ITaskQueue
     void Enqueue(TransportTask task, TaskPriority priority = TaskPriority.Normal);
 
     /// <summary>
+    /// Cố gắng xem nhiệm vụ có độ ưu tiên cao nhất mà không lấy ra khỏi hàng đợi.
+    /// </summary>
+    /// <param name="task">Nhiệm vụ được xem, hoặc null nếu hàng đợi rỗng.</param>
+    /// <returns>True nếu có nhiệm vụ để xem; ngược lại false.</returns>
+    /// <exception cref="InvalidOperationException">Ném ra khi hàng đợi ở trạng thái không hợp lệ.</exception>
+    bool TryPeek(out TransportTask? task);
+
+    /// <summary>
     /// Cố gắng lấy nhiệm vụ có độ ưu tiên cao nhất ra khỏi hàng đợi.
     /// </summary>
     /// <param name="task">Nhiệm vụ được lấy ra, hoặc null nếu hàng đợi rỗng.</param>

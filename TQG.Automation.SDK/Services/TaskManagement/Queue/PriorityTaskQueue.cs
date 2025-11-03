@@ -39,6 +39,26 @@ internal sealed class PriorityTaskQueue : ITaskQueue
         }
     }
 
+    public bool TryPeek(out TransportTask? task)
+    {
+        lock (_lockObject)
+        {
+            // Try to peek at the highest priority task without removing it
+            if (_priorityQueue.TryPeek(out task))
+            {
+                // Check if this task is still valid (not removed)
+                if (task != null && _taskLookup.ContainsKey(task.TaskId))
+                {
+                    return true; // Found a valid task
+                }
+            }
+
+            // No valid task found
+            task = null;
+            return false;
+        }
+    }
+
     public bool TryDequeue(out TransportTask? task)
     {
         lock (_lockObject)

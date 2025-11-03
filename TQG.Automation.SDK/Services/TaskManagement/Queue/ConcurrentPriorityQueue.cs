@@ -44,6 +44,21 @@ internal sealed class ConcurrentPriorityQueue<T> where T : class
         }
     }
 
+    public bool TryPeek(out T? item)
+    {
+        lock (_lockObject)
+        {
+            if (_heap.Count == 0)
+            {
+                item = null;
+                return false;
+            }
+
+            item = _heap[0].item;
+            return true;
+        }
+    }
+
     public bool TryDequeue(out T? item)
     {
         lock (_lockObject)
